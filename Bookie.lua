@@ -6,7 +6,7 @@
 -- fills left column first, then right — see SpellBook_GetButtonForID).
 
 local ADDON = ...
-local VERSION = "1.0.1"
+local VERSION = "1.0.2"
 
 local BUTTONS_PER_PAGE = 12
 local TAB_ICON = "Interface\\MacroFrame\\MacroFrame-Icon"
@@ -150,33 +150,30 @@ local function LayoutToSpellButtons()
         if btn and sb then
             btn:ClearAllPoints()
             btn:SetAllPoints(sb)
-            -- Match Blizzard name/subname placement relative to the spell button
-            local sn = sb.SpellName or _G[sb:GetName() .. "SpellName"]
-            local ssn = sb.SpellSubName or _G[sb:GetName() .. "SpellSubName"]
+            btn:SetSize(sb:GetSize())
+            ApplySpellButtonChrome(btn)
+
+            -- Template defaults: name LEFT of icon (RIGHT+5,+3), sub under name
             btn.name:ClearAllPoints()
             btn.subName:ClearAllPoints()
+            local sn = sb.SpellName or _G[sb:GetName() .. "SpellName"]
+            local ssn = sb.SpellSubName or _G[sb:GetName() .. "SpellSubName"]
             if sn then
-                local point, relativeTo, relativePoint, x, y = sn:GetPoint(1)
-                if point then
-                    btn.name:SetPoint(point, btn, relativePoint or "RIGHT", x or 5, y or 4)
-                else
-                    btn.name:SetPoint("LEFT", btn, "RIGHT", 5, 4)
-                end
-                if sn.GetWidth then btn.name:SetWidth(sn:GetWidth()) end
-                if sn.GetJustifyH then btn.name:SetJustifyH(sn:GetJustifyH()) end
+                local point, _, relativePoint, x, y = sn:GetPoint(1)
+                btn.name:SetPoint(point or "LEFT", btn, relativePoint or "RIGHT", x or 5, y or 3)
+                if sn.GetWidth and sn:GetWidth() > 0 then btn.name:SetWidth(sn:GetWidth()) end
             else
-                btn.name:SetPoint("LEFT", btn, "RIGHT", 5, 4)
-                btn.name:SetWidth(140)
+                btn.name:SetPoint("LEFT", btn, "RIGHT", 5, 3)
+                btn.name:SetWidth(103)
             end
             if ssn then
                 local point, _, relativePoint, x, y = ssn:GetPoint(1)
-                if point and relativePoint then
-                    btn.subName:SetPoint(point, btn.name, relativePoint, x or 0, y or -2)
-                else
-                    btn.subName:SetPoint("TOPLEFT", btn.name, "BOTTOMLEFT", 0, -2)
-                end
+                btn.subName:SetPoint(point or "TOPLEFT", btn.name, relativePoint or "BOTTOMLEFT", x or 0, y or -2)
+                local w, h = ssn:GetSize()
+                if w and w > 0 then btn.subName:SetSize(w, h) end
             else
                 btn.subName:SetPoint("TOPLEFT", btn.name, "BOTTOMLEFT", 0, -2)
+                btn.subName:SetSize(79, 18)
             end
         end
     end
@@ -227,16 +224,96 @@ end
 ------------------------------------------------------------------------
 -- Button factory
 ------------------------------------------------------------------------
+-- Copy EmptySlot / slot-frame chrome from a real SpellButton so we match
+-- whatever art this client uses (Vanilla UI-Spellbook-SpellBackground or
+-- newer Spellbook-Parts atlases on Anniversary).
+local function ApplySpellButtonChrome(btn)
+    local ref = _G["SpellButton1"]
+    local emptyTex = "Interface\\Spellbook\\UI-Spellbook-SpellBackground"
+    local emptyW, emptyH, emptyX, emptyY = 64, 64, -3, 3
+
+    if ref then
+        local es = ref.EmptySlot or _G["SpellButton1Background"]
+        if es and es.GetTexture then
+            local t = es:GetTexture()
+            if t then emptyTex = t end
+            emptyW, emptyH = es:GetSize()
+            local _, _, _, x, y = es:GetPoint(1)
+            if x then emptyX, emptyY = x, y end
+        end
+        -- Some builds also draw a SlotFrame overlay
+        local sf = ref.SlotFrame or _G["SpellButton1SlotFrame"]
+        if sf and sf.GetTexture and sf:GetTexture() then
+            if not btn.slotFrame then
+                btn.slotFrame = btn:CreateTexture(nil, "OVERLAY", nil, -1)
+            end
+            btn.slotFrame:SetTexture(sf:GetTexture())
+            if sf.GetAtlas and sf:GetAtlas() then
+                pcall(function() btn.slotFrame:SetAtlas(sf:GetAtlas(), true) end)
+            end
+            btn.slotFrame:ClearAllPoints()
+            btn.slotFrame:SetAllPoints(btn)
+            local w, h = sf:GetSize()
+            if w and w > 0 then btn.slotFrame:SetSize(w, h) end
+            local p, _, rp, x, y = sf:GetPoint(1)
+            if p then
+                btn.slotFrame:ClearAllPoints()
+                btn.slotFrame:SetPoint(p, btn, rp or p, x or 0, y or 0)
+                if w and w > 0 then btn.slotFrame:SetSize(w, h) end
+            end
+            btn.slotFrame:Show()
+        end
+        local tb = ref.TextBackground or _G["SpellButton1TextBackground"]
+        if tb and tb.GetTexture and tb:GetTexture() then
+            if not btn.textBg then
+                btn.textBg = btn:CreateTexture(nil, "BACKGROUND")
+            end
+            btn.textBg:SetTexture(tb:GetTexture())
+            if tb.GetAtlas and tb:GetAtlas() then
+                pcall(function() btn.textBg:SetAtlas(tb:GetAtlas(), true) end)
+            end
+            btn.textBg:ClearAllPoints()
+            local p, _, rp, x, y = tb:GetPoint(1)
+            local w, h = tb:GetSize()
+            if p then
+                btn.textBg:SetPoint(p, btn, rp or "TOPRIGHT", x or -4, y or -5)
+            else
+                btn.textBg:SetPoint("TOPLEFT", btn, "TOPRIGHT", -4, -5)
+            end
+            if w and w > 0 then btn.textBg:SetSize(w, h) end
+            btn.textBg:Show()
+        end
+    end
+
+    if not btn.emptySlot then
+        btn.emptySlot = btn:CreateTexture(nil, "BACKGROUND")
+    end
+    btn.emptySlot:SetTexture(emptyTex)
+    if type(emptyTex) == "number" or (ref and ref.EmptySlot and ref.EmptySlot.GetAtlas and ref.EmptySlot:GetAtlas()) then
+        local es = ref and (ref.EmptySlot or _G["SpellButton1Background"])
+        if es and es.GetAtlas and es:GetAtlas() then
+            pcall(function() btn.emptySlot:SetAtlas(es:GetAtlas(), true) end)
+        end
+    end
+    btn.emptySlot:ClearAllPoints()
+    btn.emptySlot:SetSize(emptyW or 64, emptyH or 64)
+    btn.emptySlot:SetPoint("TOPLEFT", btn, "TOPLEFT", emptyX or -3, emptyY or 3)
+    btn.emptySlot:Show()
+end
+
 local function CreateMacroButton(parent, index)
     local btn = CreateFrame("CheckButton", "BookieButton" .. index, parent)
+    btn:SetSize(37, 37)
     btn:SetFrameLevel((parent.GetFrameLevel and parent:GetFrameLevel() or 1) + 10)
     btn:RegisterForDrag("LeftButton")
     btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
+    ApplySpellButtonChrome(btn)
+
     btn.icon = btn:CreateTexture(nil, "BORDER")
     btn.icon:SetAllPoints()
 
-    -- Same chrome as spellbook quickslots
+    -- Same NormalTexture sizing as SpellButtonTemplate (64x64 centered)
     local nt = btn:CreateTexture(nil, "ARTWORK")
     nt:SetTexture("Interface\\Buttons\\UI-Quickslot2")
     nt:SetSize(64, 64)
@@ -254,13 +331,23 @@ local function CreateMacroButton(parent, index)
     ht:SetBlendMode("ADD")
     btn:SetHighlightTexture(ht)
 
+    local ct = btn:CreateTexture(nil, "ARTWORK")
+    ct:SetTexture("Interface\\Buttons\\CheckButtonHilight")
+    ct:SetAllPoints()
+    ct:SetBlendMode("ADD")
+    btn:SetCheckedTexture(ct)
+
+    -- SpellName / SubSpellName fonts from the real template
     btn.name = btn:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     btn.name:SetJustifyH("LEFT")
-    btn.name:SetTextColor(1, 0.82, 0)
+    btn.name:SetWordWrap(true)
+    btn.name:SetWidth(103)
+    if btn.name.SetMaxLines then btn.name:SetMaxLines(3) end
 
-    btn.subName = btn:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    local subFont = (SubSpellFont and "SubSpellFont") or "GameFontHighlightSmall"
+    btn.subName = btn:CreateFontString(nil, "ARTWORK", subFont)
     btn.subName:SetJustifyH("LEFT")
-    btn.subName:SetTextColor(0.5, 0.5, 0.5)
+    btn.subName:SetSize(79, 18)
 
     btn:SetScript("OnEnter", function(self)
         if not self.macroIndex then return end
