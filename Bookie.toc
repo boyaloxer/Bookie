@@ -2,7 +2,7 @@
 ## Title: Bookie
 ## Notes: Adds a Macros tab to the spellbook — browse and drag macros like spells.
 ## Author: boyaloxer
-## Version: 1.0.2
+## Version: 1.0.3
 ## IconTexture: Interface\MacroFrame\MacroFrame-Icon
 
 Bookie.lua
