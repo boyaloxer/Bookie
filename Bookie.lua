@@ -2,11 +2,11 @@
 -- Extra spellbook tab that lists your macros (account + character) in a
 -- spellbook-style grid. Drag them onto action bars like spells.
 --
--- Intentionally does NOT call SpellBookFrame_Update / page buttons — those
--- taint the real spell buttons. We overlay our own page and hide theirs.
+-- Layout matches Blizzard's SpellButton1-12 exactly (Anniversary Classic book
+-- fills left column first, then right — see SpellBook_GetButtonForID).
 
 local ADDON = ...
-local VERSION = "1.0.0"
+local VERSION = "1.0.1"
 
 local BUTTONS_PER_PAGE = 12
 local TAB_ICON = "Interface\\MacroFrame\\MacroFrame-Icon"
@@ -21,6 +21,21 @@ local panel
 
 local function Print(msg)
     print("|cff66ccffBookie|r " .. msg)
+end
+
+------------------------------------------------------------------------
+-- Map logical slot 1-12 -> the real SpellButton frame Blizzard uses
+-- (left column = 1..6, right column = 7..12; frames are odd/even interleaved)
+------------------------------------------------------------------------
+local function SpellButtonForSlot(slot)
+    if type(SpellBook_GetButtonForID) == "function" then
+        local b = SpellBook_GetButtonForID(slot)
+        if b then return b end
+    end
+    if slot <= 6 then
+        return _G["SpellButton" .. (((slot - 1) * 2) + 1)]
+    end
+    return _G["SpellButton" .. ((slot - 6) * 2)]
 end
 
 ------------------------------------------------------------------------
@@ -64,7 +79,7 @@ local function SetSpellButtonsShown(shown)
         end
     end
     if SpellBookPageText then
-        if shown and not active then SpellBookPageText:Show() elseif active then SpellBookPageText:Hide() end
+        if active then SpellBookPageText:Hide() elseif shown then SpellBookPageText:Show() end
     end
     if SpellBookPrevPageButton then
         if active then SpellBookPrevPageButton:Hide() elseif shown then SpellBookPrevPageButton:Show() end
@@ -99,25 +114,26 @@ local function UpdateMacroButtons()
             btn.macroName = entry.name
             btn.icon:SetTexture(entry.icon or TAB_ICON)
             btn.name:SetText(entry.name)
-            local sub = entry.scope == "character" and "Character" or "General"
-            btn.subName:SetText(sub)
+            btn.subName:SetText(entry.scope == "character" and "Character" or "General")
             btn:Enable()
-            btn:SetAlpha(1)
             btn:Show()
+            btn.icon:Show()
+            btn.name:Show()
+            btn.subName:Show()
         else
             btn.macroIndex = nil
             btn.macroName = nil
             btn.icon:SetTexture(nil)
+            btn.icon:Hide()
             btn.name:SetText("")
             btn.subName:SetText("")
             btn:Disable()
-            btn:SetAlpha(0.35)
             btn:Show()
         end
     end
 
     if pageText then
-        pageText:SetText(string.format("Page %d/%d", page, pages))
+        pageText:SetText(string.format("%d / %d", page, pages))
     end
     if prevBtn then
         if page <= 1 then prevBtn:Disable() else prevBtn:Enable() end
@@ -127,13 +143,73 @@ local function UpdateMacroButtons()
     end
 end
 
+local function LayoutToSpellButtons()
+    for i = 1, BUTTONS_PER_PAGE do
+        local btn = buttons[i]
+        local sb = SpellButtonForSlot(i)
+        if btn and sb then
+            btn:ClearAllPoints()
+            btn:SetAllPoints(sb)
+            -- Match Blizzard name/subname placement relative to the spell button
+            local sn = sb.SpellName or _G[sb:GetName() .. "SpellName"]
+            local ssn = sb.SpellSubName or _G[sb:GetName() .. "SpellSubName"]
+            btn.name:ClearAllPoints()
+            btn.subName:ClearAllPoints()
+            if sn then
+                local point, relativeTo, relativePoint, x, y = sn:GetPoint(1)
+                if point then
+                    btn.name:SetPoint(point, btn, relativePoint or "RIGHT", x or 5, y or 4)
+                else
+                    btn.name:SetPoint("LEFT", btn, "RIGHT", 5, 4)
+                end
+                if sn.GetWidth then btn.name:SetWidth(sn:GetWidth()) end
+                if sn.GetJustifyH then btn.name:SetJustifyH(sn:GetJustifyH()) end
+            else
+                btn.name:SetPoint("LEFT", btn, "RIGHT", 5, 4)
+                btn.name:SetWidth(140)
+            end
+            if ssn then
+                local point, _, relativePoint, x, y = ssn:GetPoint(1)
+                if point and relativePoint then
+                    btn.subName:SetPoint(point, btn.name, relativePoint, x or 0, y or -2)
+                else
+                    btn.subName:SetPoint("TOPLEFT", btn.name, "BOTTOMLEFT", 0, -2)
+                end
+            else
+                btn.subName:SetPoint("TOPLEFT", btn.name, "BOTTOMLEFT", 0, -2)
+            end
+        end
+    end
+
+    if prevBtn and SpellBookPrevPageButton then
+        prevBtn:ClearAllPoints()
+        prevBtn:SetAllPoints(SpellBookPrevPageButton)
+        prevBtn:SetFrameLevel(SpellBookPrevPageButton:GetFrameLevel() + 5)
+    end
+    if nextBtn and SpellBookNextPageButton then
+        nextBtn:ClearAllPoints()
+        nextBtn:SetAllPoints(SpellBookNextPageButton)
+        nextBtn:SetFrameLevel(SpellBookNextPageButton:GetFrameLevel() + 5)
+    end
+    if pageText and SpellBookPageText then
+        pageText:ClearAllPoints()
+        pageText:SetAllPoints(SpellBookPageText)
+        pageText:SetFontObject(SpellBookPageText:GetFontObject())
+        pageText:SetJustifyH(SpellBookPageText:GetJustifyH())
+    end
+end
+
 local function ShowMacrosTab()
     if not SpellBookFrame or not SpellBookFrame:IsShown() then return end
     active = true
     DeselectSkillLineTabs()
     if tabButton and tabButton.SetChecked then tabButton:SetChecked(true) end
+    LayoutToSpellButtons()
     SetSpellButtonsShown(false)
     panel:Show()
+    if prevBtn then prevBtn:Show() end
+    if nextBtn then nextBtn:Show() end
+    if pageText then pageText:Show() end
     UpdateMacroButtons()
 end
 
@@ -142,21 +218,25 @@ local function HideMacrosTab()
     active = false
     if tabButton and tabButton.SetChecked then tabButton:SetChecked(false) end
     if panel then panel:Hide() end
+    if prevBtn then prevBtn:Hide() end
+    if nextBtn then nextBtn:Hide() end
+    if pageText then pageText:Hide() end
     SetSpellButtonsShown(true)
 end
 
 ------------------------------------------------------------------------
--- Button factory (spellbook-ish look)
+-- Button factory
 ------------------------------------------------------------------------
 local function CreateMacroButton(parent, index)
     local btn = CreateFrame("CheckButton", "BookieButton" .. index, parent)
-    btn:SetSize(37, 37)
+    btn:SetFrameLevel((parent.GetFrameLevel and parent:GetFrameLevel() or 1) + 10)
     btn:RegisterForDrag("LeftButton")
     btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
     btn.icon = btn:CreateTexture(nil, "BORDER")
     btn.icon:SetAllPoints()
 
+    -- Same chrome as spellbook quickslots
     local nt = btn:CreateTexture(nil, "ARTWORK")
     nt:SetTexture("Interface\\Buttons\\UI-Quickslot2")
     nt:SetSize(64, 64)
@@ -175,15 +255,12 @@ local function CreateMacroButton(parent, index)
     btn:SetHighlightTexture(ht)
 
     btn.name = btn:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    btn.name:SetPoint("LEFT", btn, "RIGHT", 6, 6)
-    btn.name:SetPoint("RIGHT", parent, "RIGHT", -20, 0)
     btn.name:SetJustifyH("LEFT")
     btn.name:SetTextColor(1, 0.82, 0)
 
     btn.subName = btn:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    btn.subName:SetPoint("TOPLEFT", btn.name, "BOTTOMLEFT", 0, -2)
     btn.subName:SetJustifyH("LEFT")
-    btn.subName:SetTextColor(0.7, 0.7, 0.7)
+    btn.subName:SetTextColor(0.5, 0.5, 0.5)
 
     btn:SetScript("OnEnter", function(self)
         if not self.macroIndex then return end
@@ -220,129 +297,10 @@ local function CreateMacroButton(parent, index)
                 pcall(MacroFrame_SelectMacro, self.macroIndex)
             end
         end
+        self:SetChecked(false)
     end)
 
     return btn
-end
-
-local function LayoutButtons()
-    for i = 1, BUTTONS_PER_PAGE do
-        local btn = buttons[i]
-        local col = (i > 6) and 2 or 1
-        local row = ((i - 1) % 6) + 1
-        btn:ClearAllPoints()
-        if col == 1 then
-            btn:SetPoint("TOPLEFT", panel, "TOPLEFT", 32, -40 - (row - 1) * 50)
-        else
-            btn:SetPoint("TOPLEFT", panel, "TOPLEFT", 225, -40 - (row - 1) * 50)
-        end
-    end
-end
-
-------------------------------------------------------------------------
--- Build UI once SpellBookFrame exists
-------------------------------------------------------------------------
-local function EnsureUI()
-    if panel or not SpellBookFrame then return end
-
-    panel = CreateFrame("Frame", "BookiePanel", SpellBookFrame)
-    panel:SetPoint("TOPLEFT", SpellBookFrame, "TOPLEFT", 20, -75)
-    panel:SetPoint("BOTTOMRIGHT", SpellBookFrame, "BOTTOMRIGHT", -40, 80)
-    panel:Hide()
-
-    local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    title:SetPoint("TOP", panel, "TOP", 0, -4)
-    title:SetText("Macros")
-
-    for i = 1, BUTTONS_PER_PAGE do
-        buttons[i] = CreateMacroButton(panel, i)
-    end
-    LayoutButtons()
-
-    prevBtn = CreateFrame("Button", "BookiePrevPage", panel)
-    prevBtn:SetSize(32, 32)
-    prevBtn:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 40, 8)
-    prevBtn:SetNormalTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Up")
-    prevBtn:SetPushedTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Down")
-    prevBtn:SetDisabledTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Disabled")
-    prevBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
-    prevBtn:SetScript("OnClick", function()
-        page = page - 1
-        UpdateMacroButtons()
-    end)
-
-    nextBtn = CreateFrame("Button", "BookieNextPage", panel)
-    nextBtn:SetSize(32, 32)
-    nextBtn:SetPoint("LEFT", prevBtn, "RIGHT", 4, 0)
-    nextBtn:SetNormalTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Up")
-    nextBtn:SetPushedTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Down")
-    nextBtn:SetDisabledTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Disabled")
-    nextBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
-    nextBtn:SetScript("OnClick", function()
-        page = page + 1
-        UpdateMacroButtons()
-    end)
-
-    pageText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    pageText:SetPoint("LEFT", nextBtn, "RIGHT", 10, 0)
-
-    local template = "SpellBookSkillLineTabTemplate"
-    local ok
-    ok = pcall(function()
-        tabButton = CreateFrame("CheckButton", "BookieTab", SpellBookFrame, template)
-    end)
-    if not ok or not tabButton then
-        tabButton = CreateFrame("CheckButton", "BookieTab", SpellBookFrame)
-        tabButton:SetSize(32, 32)
-        tabButton:SetNormalTexture(TAB_ICON)
-        local ht = tabButton:CreateTexture(nil, "HIGHLIGHT")
-        ht:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
-        ht:SetAllPoints()
-        ht:SetBlendMode("ADD")
-        tabButton:SetHighlightTexture(ht)
-    end
-
-    tabButton:SetScript("OnClick", function()
-        ShowMacrosTab()
-    end)
-    tabButton:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Macros")
-        GameTooltip:AddLine("Browse and drag your macros like spells.", 1, 1, 1, true)
-        GameTooltip:Show()
-    end)
-    tabButton:SetScript("OnLeave", GameTooltip_Hide)
-
-    if tabButton.GetNormalTexture and tabButton:GetNormalTexture() then
-        pcall(function() tabButton:SetNormalTexture(TAB_ICON) end)
-    end
-    local icon = _G[tabButton:GetName() .. "IconTexture"] or tabButton.IconTexture or tabButton.icon
-    if icon and icon.SetTexture then icon:SetTexture(TAB_ICON) end
-
-    local anchor
-    for i = (MAX_SKILLLINE_TABS or 8), 1, -1 do
-        local t = _G["SpellBookSkillLineTab" .. i]
-        if t and t:IsShown() then
-            anchor = t
-            break
-        end
-    end
-    tabButton:ClearAllPoints()
-    if anchor then
-        tabButton:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -15)
-    else
-        tabButton:SetPoint("TOPLEFT", SpellBookFrame, "TOPRIGHT", 0, -80)
-    end
-    tabButton:Show()
-
-    for i = 1, (MAX_SKILLLINE_TABS or 8) do
-        local t = _G["SpellBookSkillLineTab" .. i]
-        if t then
-            t:HookScript("OnClick", function()
-                HideMacrosTab()
-            end)
-        end
-    end
 end
 
 local function ReanchorTab()
@@ -357,9 +315,107 @@ local function ReanchorTab()
     end
     tabButton:ClearAllPoints()
     if anchor then
-        tabButton:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -15)
+        -- Blizzard spacing between skill-line tabs is -17
+        tabButton:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -17)
+    elseif SpellBookSkillLineTab1 then
+        tabButton:SetPoint("TOPLEFT", SpellBookSkillLineTab1, "BOTTOMLEFT", 0, -17)
     else
-        tabButton:SetPoint("TOPLEFT", SpellBookFrame, "TOPRIGHT", 0, -80)
+        tabButton:SetPoint("TOPLEFT", SpellBookFrame, "TOPRIGHT", 0, -72)
+    end
+end
+
+------------------------------------------------------------------------
+-- Build UI once SpellBookFrame exists
+------------------------------------------------------------------------
+local function EnsureUI()
+    if panel or not SpellBookFrame then return end
+
+    local parent = SpellBookSpellIconsFrame or SpellBookFrame
+    panel = CreateFrame("Frame", "BookiePanel", parent)
+    panel:SetAllPoints(parent)
+    panel:Hide()
+
+    for i = 1, BUTTONS_PER_PAGE do
+        buttons[i] = CreateMacroButton(panel, i)
+    end
+
+    -- Page controls sit exactly on Blizzard's
+    prevBtn = CreateFrame("Button", "BookiePrevPage", SpellBookFrame)
+    prevBtn:SetNormalTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Up")
+    prevBtn:SetPushedTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Down")
+    prevBtn:SetDisabledTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Disabled")
+    prevBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+    prevBtn:SetScript("OnClick", function()
+        page = page - 1
+        UpdateMacroButtons()
+        if PlaySound then PlaySound(SOUNDKIT and SOUNDKIT.IG_ABILITY_PAGE_TURN or 450) end
+    end)
+    prevBtn:Hide()
+
+    nextBtn = CreateFrame("Button", "BookieNextPage", SpellBookFrame)
+    nextBtn:SetNormalTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Up")
+    nextBtn:SetPushedTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Down")
+    nextBtn:SetDisabledTexture("Interface\\Buttons\\UI-SpellbookIcon-NextPage-Disabled")
+    nextBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+    nextBtn:SetScript("OnClick", function()
+        page = page + 1
+        UpdateMacroButtons()
+        if PlaySound then PlaySound(SOUNDKIT and SOUNDKIT.IG_ABILITY_PAGE_TURN or 450) end
+    end)
+    nextBtn:Hide()
+
+    pageText = SpellBookFrame:CreateFontString("BookiePageText", "ARTWORK", "GameFontHighlightSmall")
+    pageText:Hide()
+
+    LayoutToSpellButtons()
+
+    local ok = pcall(function()
+        tabButton = CreateFrame("CheckButton", "BookieTab", SpellBookFrame, "SpellBookSkillLineTabTemplate")
+    end)
+    if not ok or not tabButton then
+        tabButton = CreateFrame("CheckButton", "BookieTab", SpellBookFrame)
+        tabButton:SetSize(32, 32)
+        local ht = tabButton:CreateTexture(nil, "HIGHLIGHT")
+        ht:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
+        ht:SetAllPoints()
+        ht:SetBlendMode("ADD")
+        tabButton:SetHighlightTexture(ht)
+    end
+
+    -- Parent tab under side tabs frame if present
+    if SpellBookSideTabsFrame then
+        tabButton:SetParent(SpellBookSideTabsFrame)
+    end
+
+    pcall(function() tabButton:SetNormalTexture(TAB_ICON) end)
+    local icon = _G["BookieTabIconTexture"] or tabButton.IconTexture or tabButton.icon
+    if icon and icon.SetTexture then
+        icon:SetTexture(TAB_ICON)
+    elseif tabButton.GetNormalTexture and tabButton:GetNormalTexture() then
+        tabButton:GetNormalTexture():SetTexture(TAB_ICON)
+    end
+
+    tabButton:SetScript("OnClick", function()
+        ShowMacrosTab()
+    end)
+    tabButton:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Macros")
+        GameTooltip:AddLine("Browse and drag your macros like spells.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    tabButton:SetScript("OnLeave", GameTooltip_Hide)
+
+    ReanchorTab()
+    tabButton:Show()
+
+    for i = 1, (MAX_SKILLLINE_TABS or 8) do
+        local t = _G["SpellBookSkillLineTab" .. i]
+        if t then
+            t:HookScript("OnClick", function()
+                HideMacrosTab()
+            end)
+        end
     end
 end
 
@@ -381,14 +437,18 @@ f:SetScript("OnEvent", function(_, event, arg1)
         SpellBookFrame:HookScript("OnShow", function()
             EnsureUI()
             ReanchorTab()
+            LayoutToSpellButtons()
             if active then
                 ShowMacrosTab()
-            else
-                if tabButton then tabButton:Show() end
+            elseif tabButton then
+                tabButton:Show()
             end
         end)
         SpellBookFrame:HookScript("OnHide", function()
             if panel then panel:Hide() end
+            if prevBtn then prevBtn:Hide() end
+            if nextBtn then nextBtn:Hide() end
+            if pageText then pageText:Hide() end
         end)
     end
 end)
@@ -396,7 +456,7 @@ end)
 SLASH_BOOKIE1 = "/bookie"
 SLASH_BOOKIE2 = "/sbm"
 SlashCmdList["BOOKIE"] = function()
-    Print("v" .. VERSION .. " — open the spellbook (P) and click the Macros tab on the right.")
+    Print("v" .. VERSION .. " — open the spellbook (P) and click the Macros tab.")
     if SpellBookFrame and not SpellBookFrame:IsShown() then
         if type(ToggleSpellBook) == "function" then
             pcall(ToggleSpellBook, BOOKTYPE_SPELL or "spell")
@@ -405,7 +465,7 @@ SlashCmdList["BOOKIE"] = function()
         end
     end
     if C_Timer and C_Timer.After then
-        C_Timer.After(0.1, function()
+        C_Timer.After(0.15, function()
             EnsureUI()
             ShowMacrosTab()
         end)
