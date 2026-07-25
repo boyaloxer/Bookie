@@ -6,7 +6,7 @@
 -- see SpellBook_GetButtonForID). Chrome copies EmptySlot from SpellButton1.
 
 local ADDON = ...
-local VERSION = "1.0.3"
+local VERSION = "1.1.0"
 
 local BUTTONS_PER_PAGE = 12
 local TAB_ICON = "Interface\\MacroFrame\\MacroFrame-Icon"
@@ -204,6 +204,14 @@ local function UpdateMacroButtons()
             btn.icon:SetTexture(entry.icon or TAB_ICON)
             btn.name:SetText(entry.name)
             btn.subName:SetText(entry.scope == "character" and "Character" or "General")
+            if btn.hotkey then
+                local hk = ""
+                if BookieBinds and BookieBinds.HotkeyTextForMacro then
+                    hk = BookieBinds.HotkeyTextForMacro(entry.index) or ""
+                end
+                btn.hotkey:SetText(hk)
+                if hk ~= "" then btn.hotkey:Show() else btn.hotkey:Hide() end
+            end
             btn:Enable()
             btn:Show()
             btn.icon:Show()
@@ -215,6 +223,10 @@ local function UpdateMacroButtons()
             btn.icon:Hide()
             btn.name:SetText("")
             btn.subName:SetText("")
+            if btn.hotkey then
+                btn.hotkey:SetText("")
+                btn.hotkey:Hide()
+            end
             btn:Disable()
             btn:Show()
         end
@@ -368,6 +380,11 @@ local function CreateMacroButton(parent, index)
     btn.subName:SetJustifyH("LEFT")
     btn.subName:SetSize(79, 18)
 
+    btn.hotkey = btn:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmallGray")
+    btn.hotkey:SetPoint("TOPRIGHT", btn, "TOPRIGHT", 2, -2)
+    btn.hotkey:SetJustifyH("RIGHT")
+    btn.hotkey:Hide()
+
     btn:SetScript("OnEnter", function(self)
         if not self.macroIndex then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -379,6 +396,13 @@ local function CreateMacroButton(parent, index)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Drag to an action bar", 0.2, 1, 0.2)
         GameTooltip:AddLine("Right-click to edit", 0.6, 0.6, 0.6)
+        if BookieBinds and BookieBinds.IsEnabled and BookieBinds.IsEnabled() then
+            local hk = BookieBinds.HotkeyTextForMacro and BookieBinds.HotkeyTextForMacro(self.macroIndex)
+            if hk and hk ~= "" then
+                GameTooltip:AddLine("Bookie bind: " .. hk, 0.4, 0.8, 1)
+            end
+            GameTooltip:AddLine("Alt-Right-Click to keybind", 0.2, 1, 0.2)
+        end
         GameTooltip:Show()
     end)
     btn:SetScript("OnLeave", GameTooltip_Hide)
@@ -389,11 +413,24 @@ local function CreateMacroButton(parent, index)
             Print("Can't drag macros onto bars in combat.")
             return
         end
+        local name = GetMacroInfo(self.macroIndex)
+        if BookieBinds and BookieBinds.NoteDrag and name then
+            BookieBinds.NoteDrag("macro", name)
+        end
         PickupMacro(self.macroIndex)
     end)
 
     btn:SetScript("OnClick", function(self, button)
         if button == "RightButton" and self.macroIndex then
+            if BookieBinds and BookieBinds.IsEnabled and BookieBinds.IsEnabled()
+                and IsAltKeyDown and IsAltKeyDown() then
+                local name = GetMacroInfo(self.macroIndex)
+                if name and BookieBinds.StartBind then
+                    BookieBinds.StartBind("macro", name)
+                end
+                self:SetChecked(false)
+                return
+            end
             if type(ShowMacroFrame) == "function" then
                 ShowMacroFrame()
             elseif MacroFrame then
@@ -585,10 +622,35 @@ f:SetScript("OnEvent", function(_, event, arg1)
     end
 end)
 
+function Bookie_RefreshMacroHotkeys()
+    if active then UpdateMacroButtons() end
+end
+
 SLASH_BOOKIE1 = "/bookie"
 SLASH_BOOKIE2 = "/sbm"
-SlashCmdList["BOOKIE"] = function()
+SlashCmdList["BOOKIE"] = function(msg)
+    msg = strtrim(msg or "")
+    local cmd, rest = msg:match("^(%S+)%s*(.-)$")
+    cmd = string.lower(cmd or "")
+
+    if cmd == "binds" or cmd == "bind" or cmd == "keybind" then
+        if BookieBinds and BookieBinds.HandleSlash then
+            BookieBinds.HandleSlash(rest)
+        else
+            Print("Binds module missing — reinstall Bookie.")
+        end
+        return
+    end
+
+    if cmd == "help" then
+        Print("v" .. VERSION)
+        Print("/bookie — open Macros tab")
+        Print("/bookie binds on|off|status — spellbook keybinds (off by default)")
+        return
+    end
+
     Print("v" .. VERSION .. " — open the spellbook (P) and click the Macros tab.")
+    Print("Optional: /bookie binds on — bind spells in the book, then drag to bars.")
     EnsureUI()
     if SpellBookFrame and not SpellBookFrame:IsShown() then
         if type(ToggleSpellBook) == "function" then

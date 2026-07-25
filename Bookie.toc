@@ -1,8 +1,10 @@
 ## Interface: 20505, 20506
 ## Title: Bookie
-## Notes: Adds a Macros tab to the spellbook — browse and drag macros like spells.
+## Notes: Macros tab for the spellbook, plus optional spellbook keybinds.
 ## Author: boyaloxer
-## Version: 1.0.3
+## Version: 1.1.0
+## SavedVariables: BookieDB
 ## IconTexture: Interface\MacroFrame\MacroFrame-Icon
 
+BookieBinds.lua
 Bookie.lua
