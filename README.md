@@ -31,6 +31,8 @@ When **on**:
 
 Turning binds **off** stops the new UI; it does not auto-restore old keys. Keep a copy of `bindings-cache.wtf` (see DotkillSetup `BindingsBackup/`) if you want a hard revert.
 
+**Minimap:** book icon — left-click opens the Macros tab, right-click toggles spellbook binds, drag to move. Hide with `/bookie minimap hide`.
+
 Slash command: `/bookie` (also `/sbm`) · `/bookie help`
 
 ## Notes

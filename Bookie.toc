@@ -2,9 +2,9 @@
 ## Title: Bookie
 ## Notes: Macros tab for the spellbook, plus optional spellbook keybinds.
 ## Author: boyaloxer
-## Version: 1.1.0
+## Version: 1.1.3
 ## SavedVariables: BookieDB
-## IconTexture: Interface\MacroFrame\MacroFrame-Icon
+## IconTexture: Interface\Icons\INV_Misc_Book_09
 
 BookieBinds.lua
 Bookie.lua

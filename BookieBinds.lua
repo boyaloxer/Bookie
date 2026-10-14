@@ -32,11 +32,20 @@ function M.IsEnabled()
     return DB().bindsMode == true
 end
 
+-- Always persist Bookie edits as CHARACTER binds (2), never account (1).
+-- Saving to the account set was overwriting ACTIONBUTTON keys for every toon.
+local function CharacterBindingSet()
+    return (CHARACTER_BINDINGS or 2)
+end
+
 local function SaveBindChanges()
-    if type(SaveBindings) ~= "function" or type(GetCurrentBindingSet) ~= "function" then
+    if type(SaveBindings) ~= "function" then
         return
     end
-    pcall(SaveBindings, GetCurrentBindingSet())
+    local which = CharacterBindingSet()
+    -- If account binds are currently loaded, this writes a per-character overlay
+    -- from the in-memory set (including our edit) without touching account binds on disk.
+    pcall(SaveBindings, which)
 end
 
 ------------------------------------------------------------------------
@@ -61,6 +70,21 @@ local function ActionSlotToCommand(slot)
     return nil
 end
 
+-- Classic/TBC: bare "SPELL Fear" applies to the spell name (all ranks / max).
+-- Rank-specific binds use "Fear(Rank 3)" with no space before "(".
+local function SpellBindName(name, sub)
+    if not name or name == "" then return nil end
+    if sub and sub ~= "" and string.match(sub, "^[Rr]ank%s*%d+") then
+        return name .. "(" .. sub .. ")"
+    end
+    return name
+end
+
+local function SpellBaseName(bindName)
+    if not bindName then return nil end
+    return string.match(bindName, "^(.-)%s*%(") or bindName
+end
+
 local function BindingCommandForTarget(kind, name)
     if not name then return nil end
     if kind == "spell" then
@@ -76,6 +100,16 @@ local function KeyForTarget(kind, name)
     if not cmd or type(GetBindingKey) ~= "function" then return nil end
     local k1 = GetBindingKey(cmd)
     return k1
+end
+
+-- Remove a bare unranked "SPELL Name" bind so it doesn't cover every rank.
+local function ClearUnrankedSpellBind(bindName, keepKey)
+    local base = SpellBaseName(bindName)
+    if not base or base == bindName then return end
+    if type(GetBindingKey) ~= "function" then return end
+    local k1, k2 = GetBindingKey("SPELL " .. base)
+    if k1 and k1 ~= keepKey then SetBinding(k1) end
+    if k2 and k2 ~= keepKey then SetBinding(k2) end
 end
 
 local function FormatKey(key)
@@ -140,8 +174,9 @@ function M.RefreshSpellHotkeys()
                 fs:SetText("")
                 fs:Hide()
             else
-                local name = SpellInfoFromButton(btn)
-                local key = name and KeyForTarget("spell", name)
+                local name, sub = SpellInfoFromButton(btn)
+                local bindName = SpellBindName(name, sub)
+                local key = bindName and KeyForTarget("spell", bindName)
                 if key then
                     fs:SetText(FormatKey(key))
                     fs:Show()
@@ -199,6 +234,9 @@ local function ApplyBind(key)
     end
 
     if ok then
+        if kind == "spell" then
+            ClearUnrankedSpellBind(name, key)
+        end
         SaveBindChanges()
         Print(string.format("Bound %s → %s (%s).", FormatKey(key), name, kind))
         DB().owned = DB().owned or {}
@@ -320,23 +358,28 @@ function M.StartBind(kind, name)
 end
 
 function M.StartBindSpellButton(btn)
-    local name = SpellInfoFromButton(btn)
-    if not name then
+    local name, sub = SpellInfoFromButton(btn)
+    local bindName = SpellBindName(name, sub)
+    if not bindName then
         Print("No spell on that button.")
         return
     end
-    M.StartBind("spell", name)
+    M.StartBind("spell", bindName)
 end
 
-function M.NoteDrag(kind, name)
+function M.NoteDrag(kind, name, sub)
     if not M.IsEnabled() or not name then
         pending = nil
         return
     end
+    local bindName = name
+    if kind == "spell" then
+        bindName = SpellBindName(name, sub) or name
+    end
     pending = {
         kind = kind,
-        name = name,
-        key = KeyForTarget(kind, name),
+        name = bindName,
+        key = KeyForTarget(kind, bindName),
     }
 end
 
@@ -398,19 +441,20 @@ local function HookSpellButtons()
             end)
             btn:HookScript("OnDragStart", function(self)
                 if not M.IsEnabled() then return end
-                local name = SpellInfoFromButton(self)
-                if name then M.NoteDrag("spell", name) end
+                local name, sub = SpellInfoFromButton(self)
+                if name then M.NoteDrag("spell", name, sub) end
             end)
             btn:HookScript("OnEnter", function(self)
                 if not M.IsEnabled() or not GameTooltip:IsShown() then return end
-                local name = SpellInfoFromButton(self)
-                if not name then return end
-                local key = KeyForTarget("spell", name)
+                local name, sub = SpellInfoFromButton(self)
+                local bindName = SpellBindName(name, sub)
+                if not bindName then return end
+                local key = KeyForTarget("spell", bindName)
                 GameTooltip:AddLine(" ")
                 if key then
-                    GameTooltip:AddLine("Bookie bind: " .. FormatKey(key), 0.4, 0.8, 1)
+                    GameTooltip:AddLine("Bookie bind: " .. FormatKey(key) .. " → " .. bindName, 0.4, 0.8, 1)
                 end
-                GameTooltip:AddLine("Alt-Right-Click to keybind", 0.2, 1, 0.2)
+                GameTooltip:AddLine("Alt-Right-Click to keybind this rank", 0.2, 1, 0.2)
                 if key then
                     GameTooltip:AddLine("Drag to a bar to attach this key to the slot", 0.6, 0.6, 0.6)
                 end
@@ -436,7 +480,8 @@ function M.SetEnabled(on)
     if on then
         Print("Spellbook binds |cff00ff00ON|r — Alt-Right-Click a spell, then press a key.")
         Print("Drag a bound spell onto a bar to attach that key to the bar button.")
-        Print("Classic bar binds stay as-is until you rebind a key. Backup: DotkillSetup/BindingsBackup.")
+        Print("Bookie saves those binds |cff66ccffper character|r (won't rewrite account-wide binds for alts).")
+        Print("Note: a key can only do one thing — binding it in the book replaces that key on the bar |cffaaaaaafor this character|r.")
     else
         Print("Spellbook binds |cffff6666OFF|r — normal action-bar keybinds only.")
     end

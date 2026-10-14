@@ -6,10 +6,11 @@
 -- see SpellBook_GetButtonForID). Chrome copies EmptySlot from SpellButton1.
 
 local ADDON = ...
-local VERSION = "1.1.0"
+local VERSION = "1.1.3"
 
 local BUTTONS_PER_PAGE = 12
-local TAB_ICON = "Interface\\MacroFrame\\MacroFrame-Icon"
+-- Book icon (addon list, spellbook tab, minimap)
+local TAB_ICON = "Interface\\Icons\\INV_Misc_Book_09"
 
 local active = false
 local page = 1
@@ -626,6 +627,146 @@ function Bookie_RefreshMacroHotkeys()
     if active then UpdateMacroButtons() end
 end
 
+------------------------------------------------------------------------
+-- Open Macros tab (slash / minimap)
+------------------------------------------------------------------------
+local function OpenMacrosTab()
+    EnsureUI()
+    if SpellBookFrame and not SpellBookFrame:IsShown() then
+        if type(ToggleSpellBook) == "function" then
+            pcall(ToggleSpellBook, BOOKTYPE_SPELL or "spell")
+        else
+            ShowUIPanel(SpellBookFrame)
+        end
+    end
+    local function finish()
+        EnsureUI()
+        ShowMacrosTab()
+    end
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.15, finish)
+    else
+        finish()
+    end
+end
+
+------------------------------------------------------------------------
+-- Minimap button (book icon)
+------------------------------------------------------------------------
+local minimapBtn
+
+local function MinimapDB()
+    BookieDB = BookieDB or {}
+    BookieDB.minimap = BookieDB.minimap or { hide = false, angle = 220 }
+    return BookieDB.minimap
+end
+
+local function UpdateMinimapPosition()
+    if not minimapBtn or not Minimap then return end
+    local angle = math.rad(MinimapDB().angle or 220)
+    local radius = 80
+    minimapBtn:ClearAllPoints()
+    minimapBtn:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
+end
+
+local function EnsureMinimapButton()
+    if minimapBtn or not Minimap then return end
+
+    local btn = CreateFrame("Button", "BookieMinimapButton", Minimap)
+    minimapBtn = btn
+    btn:SetSize(32, 32)
+    btn:SetFrameStrata("MEDIUM")
+    btn:SetFrameLevel(8)
+    btn:SetMovable(true)
+    btn:RegisterForDrag("LeftButton")
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    btn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+
+    local overlay = btn:CreateTexture(nil, "OVERLAY")
+    overlay:SetSize(53, 53)
+    overlay:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+    overlay:SetPoint("TOPLEFT", 0, 0)
+
+    local icon = btn:CreateTexture(nil, "BACKGROUND")
+    icon:SetSize(20, 20)
+    icon:SetTexture(TAB_ICON)
+    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    icon:SetPoint("CENTER", 0, 1)
+    btn.icon = icon
+
+    local function ShowMinimapTooltip(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:SetText("Bookie", 1, 1, 1)
+        GameTooltip:AddLine("Left-click: open Macros tab", 0.8, 0.8, 0.8)
+        GameTooltip:AddLine("Right-click: toggle spellbook binds", 0.8, 0.8, 0.8)
+        GameTooltip:AddLine("Drag: move button", 0.5, 0.5, 0.5)
+        if BookieBinds and BookieBinds.IsEnabled then
+            local on = BookieBinds.IsEnabled()
+            GameTooltip:AddLine("Binds: " .. (on and "|cff00ff00ON|r" or "|cffff6666OFF|r"), 0.6, 0.8, 1)
+        end
+        GameTooltip:Show()
+    end
+
+    btn:SetScript("OnEnter", ShowMinimapTooltip)
+    btn:SetScript("OnLeave", GameTooltip_Hide)
+
+    btn:SetScript("OnClick", function(self, button)
+        if button == "RightButton" then
+            if BookieBinds and BookieBinds.SetEnabled and BookieBinds.IsEnabled then
+                BookieBinds.SetEnabled(not BookieBinds.IsEnabled())
+                if GameTooltip:IsOwned(self) then
+                    ShowMinimapTooltip(self)
+                end
+            else
+                Print("Binds module missing.")
+            end
+            return
+        end
+        OpenMacrosTab()
+    end)
+
+    btn:SetScript("OnDragStart", function(self)
+        self:LockHighlight()
+        self:SetScript("OnUpdate", function(self)
+            local mx, my = Minimap:GetCenter()
+            local cx, cy = GetCursorPosition()
+            local scale = Minimap:GetEffectiveScale()
+            cx, cy = cx / scale, cy / scale
+            MinimapDB().angle = math.deg(math.atan2(cy - my, cx - mx)) % 360
+            UpdateMinimapPosition()
+        end)
+    end)
+    btn:SetScript("OnDragStop", function(self)
+        self:SetScript("OnUpdate", nil)
+        self:UnlockHighlight()
+    end)
+
+    UpdateMinimapPosition()
+    if MinimapDB().hide then
+        btn:Hide()
+    else
+        btn:Show()
+    end
+end
+
+local function SetMinimapShown(shown)
+    local db = MinimapDB()
+    db.hide = not shown
+    EnsureMinimapButton()
+    if minimapBtn then
+        if shown then minimapBtn:Show() else minimapBtn:Hide() end
+    end
+    Print("Minimap button " .. (shown and "|cff00ff00shown|r" or "|cffff6666hidden|r") .. ".")
+end
+
+-- Ensure minimap after login
+local mm = CreateFrame("Frame")
+mm:RegisterEvent("PLAYER_LOGIN")
+mm:SetScript("OnEvent", function()
+    BookieDB = BookieDB or {}
+    EnsureMinimapButton()
+end)
+
 SLASH_BOOKIE1 = "/bookie"
 SLASH_BOOKIE2 = "/sbm"
 SlashCmdList["BOOKIE"] = function(msg)
@@ -642,32 +783,27 @@ SlashCmdList["BOOKIE"] = function(msg)
         return
     end
 
-    if cmd == "help" then
-        Print("v" .. VERSION)
-        Print("/bookie — open Macros tab")
-        Print("/bookie binds on|off|status — spellbook keybinds (off by default)")
+    if cmd == "minimap" or cmd == "mm" then
+        rest = string.lower(strtrim(rest or ""))
+        if rest == "hide" or rest == "off" or rest == "0" then
+            SetMinimapShown(false)
+        elseif rest == "show" or rest == "on" or rest == "1" then
+            SetMinimapShown(true)
+        else
+            local hidden = MinimapDB().hide
+            SetMinimapShown(hidden) -- toggle
+        end
         return
     end
 
-    Print("v" .. VERSION .. " — open the spellbook (P) and click the Macros tab.")
-    Print("Optional: /bookie binds on — bind spells in the book, then drag to bars.")
-    EnsureUI()
-    if SpellBookFrame and not SpellBookFrame:IsShown() then
-        if type(ToggleSpellBook) == "function" then
-            pcall(ToggleSpellBook, BOOKTYPE_SPELL or "spell")
-        else
-            ShowUIPanel(SpellBookFrame)
-        end
+    if cmd == "help" then
+        Print("v" .. VERSION)
+        Print("/bookie — open Macros tab")
+        Print("/bookie binds on|off|status — spellbook keybinds")
+        Print("/bookie minimap [show|hide] — book icon on the minimap")
+        return
     end
-    if C_Timer and C_Timer.After then
-        C_Timer.After(0.15, function()
-            EnsureUI()
-            ShowMacrosTab()
-            if tabButton then
-                Print("tab visible=" .. tostring(tabButton:IsShown()))
-            else
-                Print("tab missing — check for a Bookie UI setup error above.")
-            end
-        end)
-    end
+
+    Print("v" .. VERSION .. " — opening Macros tab.")
+    OpenMacrosTab()
 end
